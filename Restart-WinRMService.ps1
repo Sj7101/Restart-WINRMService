@@ -1,38 +1,39 @@
 ﻿function Restart-WinRMService {
-    # Define log file location
-    $logFile = "G:\Users\Shawn\Desktop\Logs\WinRMServiceRestart.log"
-    
-    # Log function
-    function Log {
-        param (
-            [string]$message
-        )
-        $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-        $logMessage = "$timestamp : $message"
-        Add-Content -Path $logFile -Value $logMessage
-    }
+    param (
+        [string]$ComputerName = "localhost"  # Default to localhost if no computer name is specified
+    )
 
-    # Function to get the current state of the WinRM service
+    # Function to get the current state of the WinRM service on a remote machine
     function Get-WinRMServiceState {
-        return Get-WmiObject -Class Win32_Service -Filter "Name='WinRM'"
+        try {
+            return Get-WmiObject -Class Win32_Service -Filter "Name='WinRM'" -ComputerName $ComputerName
+        } catch {
+            Write-Host "Error connecting to $ComputerName: $_"
+            return $null
+        }
     }
 
-    # Function to retrieve the last WinRM service error message
+    # Function to retrieve the last WinRM service error message from a remote machine
     function Get-ServiceError {
-        $errorLog = Get-EventLog -LogName System -Source "Service Control Manager" -EntryType Error -Newest 5 |
-            Where-Object { $_.Message -like "*WinRM*" }
-        return $errorLog
+        try {
+            $errorLog = Get-WmiObject -Class Win32_NTLogEvent -ComputerName $ComputerName -Filter "Logfile = 'System' AND SourceName = 'Service Control Manager' AND EventType = 1" |
+                Where-Object { $_.InsertionStrings -like '*WinRM*' } | Select-Object -First 5
+            return $errorLog
+        } catch {
+            Write-Host "Error fetching error logs from $ComputerName: $_"
+            return $null
+        }
     }
 
     # Get the current WinRM service status
     $winrmService = Get-WinRMServiceState
 
     if ($winrmService) {
-        Log "WinRM service found."
+        Write-Host "WinRM service found on $ComputerName."
 
         # Check if the service is running
         if ($winrmService.State -eq 'Running') {
-            Log "WinRM service is currently running. Attempting to restart..."
+            Write-Host "WinRM service is currently running on $ComputerName. Attempting to restart..."
 
             # Try to restart the service
             try {
@@ -45,25 +46,23 @@
                 # Re-check the service state by querying again
                 $winrmService = Get-WinRMServiceState
                 if ($winrmService.State -eq 'Running') {
-                    Log "WinRM service successfully restarted."
-                    Write-Host "WinRM service successfully restarted."
+                    Write-Host "WinRM service successfully restarted on $ComputerName."
                 } else {
-                    Log "WinRM service restart failed."
-                    Write-Host "WinRM service restart failed."
+                    Write-Host "WinRM service restart failed on $ComputerName."
 
                     # Log service error details
                     $errorDetails = Get-ServiceError
                     if ($errorDetails) {
-                        Log "Service Error: $($errorDetails.Message)"
-                        Write-Host "Service Error: $($errorDetails.Message)"
+                        $errorDetails | ForEach-Object { 
+                            Write-Host "Service Error: $($_.Message)"
+                        }
                     }
                 }
             } catch {
-                Log "Error restarting the WinRM service: $_"
-                Write-Host "Error restarting the WinRM service: $_"
+                Write-Host "Error restarting the WinRM service on $ComputerName: $_"
             }
         } else {
-            Log "WinRM service is not running. Attempting to start..."
+            Write-Host "WinRM service is not running on $ComputerName. Attempting to start..."
 
             # Try to start the service if it is not running
             try {
@@ -73,26 +72,27 @@
                 # Re-check the service state by querying again
                 $winrmService = Get-WinRMServiceState
                 if ($winrmService.State -eq 'Running') {
-                    Log "WinRM service successfully started."
-                    Write-Host "WinRM service successfully started."
+                    Write-Host "WinRM service successfully started on $ComputerName."
                 } else {
-                    Log "Failed to start the WinRM service."
-                    Write-Host "Failed to start the WinRM service."
+                    Write-Host "Failed to start the WinRM service on $ComputerName."
 
                     # Log service error details
                     $errorDetails = Get-ServiceError
                     if ($errorDetails) {
-                        Log "Service Error: $($errorDetails.Message)"
-                        Write-Host "Service Error: $($errorDetails.Message)"
+                        $errorDetails | ForEach-Object { 
+                            Write-Host "Service Error: $($_.Message)"
+                        }
                     }
                 }
             } catch {
-                Log "Error starting the WinRM service: $_"
-                Write-Host "Error starting the WinRM service: $_"
+                Write-Host "Error starting the WinRM service on $ComputerName: $_"
             }
         }
     } else {
-        Log "WinRM service not found on this system."
-        Write-Host "WinRM service not found on this system."
+        Write-Host "WinRM service not found on $ComputerName."
     }
+}
+
+foreach($ComputerName in $ComputerNames){
+    Restart-WinRMService -ComputerName $ComputerName
 }
